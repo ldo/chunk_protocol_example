@@ -1,0 +1,441 @@
+#!/usr/bin/python3
+#+
+# Example server for chunk protocol, using asyncio.
+#-
+
+import sys
+import os
+import errno
+from weakref import \
+    ref as weak_ref
+import time
+import socket
+import asyncio
+import common
+from common import \
+    TIME_UNIT, \
+    chunk, \
+    ID
+
+loop = asyncio.get_event_loop()
+
+#+
+# Useful stuff
+#-
+
+def unlink_if(pathname) :
+    "tries to delete pathname, ignoring any error if it doesn't exist."
+    try :
+        os.unlink(pathname)
+    except OSError as err :
+        if err.errno != errno.ENOENT :
+            # Not bothering to recover from privilege failures
+            raise
+        #end if
+    #end try
+#end unlink_if
+
+#+
+# Logging
+#-
+
+class logfile :
+
+    log = sys.stderr # where output actually goes
+    flush_timeout = 0.5 # maximum delay before flushing log
+    flush_pending = None # current pending-flush task, if any
+
+    @staticmethod
+    def timestamp(when = None) :
+        "returns a UTC timestamp in the form yyyymmdddhhmmss for" \
+        " the specified time, or the current time if not specified."
+        if when == None :
+            when = time.time()
+        #end if
+        items = time.gmtime(when)
+        return \
+                "%04d%02d%02d%02d%02d%02d" \
+            % \
+                (
+                    items.tm_year,
+                    items.tm_mon,
+                    items.tm_mday,
+                    items.tm_hour,
+                    items.tm_min,
+                    items.tm_sec,
+                )
+    #end timestamp
+
+    @classmethod
+    def queue_flush(celf) :
+        "ensures that any buffered log messages will actually be" \
+        " written within a reasonable time."
+        if loop != None and celf.flush_pending == None :
+            celf.flush_pending = loop.call_later(celf.flush_timeout, celf.flush)
+        #end if
+    #end queue_flush
+
+    @classmethod
+    def writeln(celf, msg) :
+        "writes msg to the log as a separate line, prefixed with the current timestamp."
+        celf.log.write \
+          (
+            celf.timestamp() + ": " + msg + "\n"
+          )
+        celf.queue_flush()
+    #end writeln
+
+    @classmethod
+    def write(celf, msg) :
+        "writes each separate line of msg to the log, prefixed with the current timestamp."
+        now = celf.timestamp()
+        lines = msg.split("\n")
+        if len(lines) != 0 and len(lines[-1]) == 0 :
+            lines = lines[:len(lines) - 1] # ignore empty line following last newline, if any
+        #end if
+        for line in lines :
+            celf.log.write \
+              (
+                now + ": " + line + "\n"
+              )
+        #end for
+        celf.queue_flush()
+    #end write
+
+    @classmethod
+    def flush(celf) :
+        "ensures all previously-output messages have really been written to the log."
+        celf.flush_pending = None
+        celf.log.flush()
+    #end flush
+
+#end logfile
+
+#+
+# Client communication
+#-
+
+io_timeout = 1 * TIME_UNIT.MINUTE
+  # short value for testing
+
+class ClientContext :
+
+    client_count = 0
+    live_clients = set()
+    shutting_down = False
+
+    def __init__(self, conn) :
+        celf = type(self)
+        self.conn = conn
+        celf.client_count += 1
+        self.description = "<client %d>" % self.client_count
+        self.reading_header = True
+        self.chunk_id = None
+        self.to_read = None
+        self.data_read = None
+        self.current_request = None # need to keep my own strong references to pending tasks
+        self.to_write = None
+        self.timeout_pending = None
+        celf.live_clients.add(self)
+        self.reset_timeout()
+    #end __init__
+
+    def close(self, reason) :
+        if self.conn != None :
+            logfile.writeln("closing client %s -- %s." % (self.description, reason))
+            self.clear_timeout()
+            self.conn.close()
+            self.conn = None
+            celf = type(self)
+            celf.live_clients.remove(self)
+            if celf.shutting_down and len(celf.live_clients) == 0 :
+                loop.stop()
+            #end if
+        #end if
+    #end close
+
+    def clear_timeout(self) :
+        if self.timeout_pending != None :
+            self.timeout_pending.cancel()
+            self.timeout_pending = None
+        #end if
+    #end clear_timeout
+
+    def reset_timeout(self) :
+
+        w_self = weak_ref(self)
+
+        def idle_close() :
+            self = w_self()
+            if self != None :
+                self.timeout_pending = None
+                self.close("idle timeout")
+            #end if
+        #end idle_close
+
+    #begin reset_timeout
+        self.clear_timeout()
+        self.timeout_pending = loop.call_later(io_timeout, idle_close)
+    #end reset_timeout
+
+    def fileno(self) :
+        return self.conn.fileno()
+    #end fileno
+
+    def read_more(self) :
+        if not self.shutting_down :
+            if self.reading_header :
+                if self.data_read == None :
+                    self.data_read = b""
+                    self.to_read = 8
+                #end if
+            #end if
+            try :
+                data = self.conn.recv(self.to_read)
+            except OSError as err :
+                logfile.writeln \
+                  (
+                        "error %d trying to read from %s."
+                    %
+                        (err.errno, self.description)
+                  )
+                data = None
+            #end try
+            if data != None :
+                if len(data) != 0 :
+                    self.reset_timeout()
+                    self.data_read += data
+                    self.to_read -= len(data)
+                    if self.to_read == 0 :
+                        if self.reading_header :
+                            self.chunk_id, self.to_read = chunk.extract_header(self.data_read)
+                            self.data_read = b""
+                            self.reading_header = False
+                            if self.to_read == 0 :
+                                loop.remove_reader(self)
+                                self.process_request()
+                            #end if
+                        else :
+                            loop.remove_reader(self)
+                            self.process_request()
+                        #end if
+                    #end if
+                else :
+                    self.close("read EOF")
+                #end if
+            else :
+                self.close("read error")
+            #end if
+        else :
+            self.close("server shutting down")
+        #end if
+    #end read_more
+
+    def write_more(self) :
+        try :
+            written = self.conn.send(self.to_write)
+        except OSError as err :
+            logfile.writeln \
+              (
+                    "error %d trying to write to %s."
+                %
+                    (err.errno, self.description)
+              )
+            written = None
+        #end try
+        logfile.writeln("writing %s => %s" % (repr(self.to_write), repr(written))) # debug
+        if written != None :
+            self.reset_timeout()
+            self.to_write = self.to_write[written:]
+            if len(self.to_write) == 0 :
+                self.to_write = None
+                loop.remove_writer(self)
+                if not self.shutting_down :
+                    # ready for next request
+                    self.reading_header = True
+                    self.data_read = None
+                    loop.add_reader(self, self.read_more)
+                else :
+                    self.close("server shutting down")
+                #end if
+            #end if
+        else :
+            self.close("write error")
+        #end if
+    #end write_more
+
+    def process_request(self) :
+        self.clear_timeout()
+        logfile.writeln("process request %s" % repr(self.chunk_id))
+        func = server_functions.get(self.chunk_id)
+        if func != None :
+            if func["parse"] :
+                args = dict(chunk.extract_sequence(self.data_read))
+            else :
+                args = self.data_read
+            #end if
+            try :
+                result = func["action"](self, args)
+            except RequestFailure as bad :
+                self.close \
+                  (
+                        "validation failure for request %s: %s"
+                    %
+                        (repr(self.chunk_id), bad.msg)
+                  )
+            #end try
+            if asyncio.iscoroutine(result) :
+                assert self.current_request == None
+                w_self = weak_ref(self)
+
+                async def await_request_done(request_task) :
+                    try :
+                        result = await request_task
+                    except RequestFailure as bad :
+                        self = w_self()
+                        if self != None :
+                            self.close \
+                              (
+                                    "validation failure for async request %s: %s"
+                                %
+                                    (repr(self.chunk_id), bad.msg)
+                              )
+                        #end if
+                    #end try
+                    self = w_self()
+                    if self != None :
+                        self.current_request = None
+                    #end if
+                #end await_request_done
+
+                self.current_request = loop.create_task(await_request_done(result))
+            #end if
+        else :
+            self.close("bad request %s" % repr(self.chunk_id))
+        #end if
+    #end process_request
+
+    def return_response(self, id, contents) :
+        logfile.writeln("return response (%s, %s)" % (repr(id), repr(contents)))
+        assert self.to_write == None
+        if id != None :
+            self.to_write = chunk.make(id, contents)
+            loop.add_writer(self, self.write_more)
+        else :
+            self.close("aborting request %s" % repr(self.chunk_id))
+        #end if
+    #end return_response
+
+#end ClientContext
+
+#+
+# Request handling
+#-
+
+class RequestFailure(Exception) :
+
+    def __init__(self, msg) :
+        self.msg = msg
+    #end __init__
+
+#end RequestFailure
+
+def require_all(keys, args) :
+    "raises a RequestFailure if not all the specified keys are in args."
+    missing = set(k for k in keys if k not in args)
+    if len(missing) != 0 :
+        raise RequestFailure \
+          (
+            "missing required arg keywords: %s" % ", ".join(repr(k) for k in sorted(missing))
+          )
+    #end if
+#end require_all
+
+def handle_noop_request(client, contents) :
+    client.return_response(ID.reply_noop, b"")
+#end handle_noop_request
+
+def handle_shutdown_request(client, contents) :
+    logfile.writeln("shutdown request received from client %s." % client.description)
+    ClientContext.shutting_down = True
+    client.return_response(ID.reply_noop, b"")
+#end handle_shutdown_request
+
+def handle_set_description_request(client, contents) :
+    require_all([ID.name], contents)
+    logfile.writeln("set client description to %s" % repr(contents[ID.name]))
+    client.description = contents[ID.name] # TBD sanitize
+    client.return_response(ID.reply_noop, b"")
+#end handle_set_description_request
+
+async def handle_delay_request(client, contents) :
+    require_all([ID.interval], contents)
+    try :
+        interval = float(contents[ID.interval])
+    except ValueError :
+        raise RequestFailure("invalid delay interval")
+    #end try
+    logfile.writeln("delay for %.3f seconds" % interval)
+    await asyncio.sleep(interval)
+    client.return_response(ID.reply_noop, b"")
+#end def handle_delay_request
+
+server_functions = \
+    {
+        ID.request_noop :
+            {
+                "action" : handle_noop_request,
+                "parse" : False,
+            },
+        ID.request_shutdown :
+            {
+                "action" : handle_shutdown_request,
+                "parse" : True,
+            },
+        ID.request_set_description :
+            {
+                "action" : handle_set_description_request,
+                "parse" : True,
+            },
+        ID.request_delay :
+            {
+                "action" : handle_delay_request,
+                "parse" : True,
+            },
+    }
+
+#+
+# Mainline
+#-
+
+def accept_connection(server_listen) :
+    try :
+        conn, peername = server_listen.accept()
+    except OSError as err :
+        logfile.writeln \
+          (
+            "server_loop: error %d trying to accept connection." % err.errno
+          )
+        conn = None
+    #end try
+    if conn != None :
+        client = ClientContext(conn)
+        loop.add_reader(client, client.read_more)
+    #end if
+#end accept_connection
+
+def start_server() :
+    server_listen = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    unlink_if(common.socket_name)
+    server_listen.bind(common.socket_name)
+    os.chmod(common.socket_name, 0o777)
+    server_listen.listen(socket.SOMAXCONN)
+    loop.add_reader(server_listen, accept_connection, server_listen)
+#end start_server
+
+logfile.writeln("example server starting up")
+start_server()
+loop.run_forever()
+loop = None # stop calling logfile.queue_flush()
+logfile.writeln("example server shutting down")
+logfile.flush()

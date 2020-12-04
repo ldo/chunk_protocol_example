@@ -1,0 +1,118 @@
+#!/usr/bin/python3
+#+
+# Example client for chunk protocol, using asyncio.
+#-
+
+import sys
+from weakref import \
+    ref as weak_ref
+import socket
+import asyncio
+import common
+from common import \
+    chunk, \
+    ID
+
+loop = asyncio.get_event_loop()
+
+async def send_all(to_socket, contents) :
+
+    done = loop.create_future()
+    w_loop = weak_ref(loop)
+
+    def write_more() :
+        nonlocal contents
+        loop = w_loop()
+        assert loop != None, "event loop has gone away"
+        try :
+            written = to_socket.send(contents)
+        except OSError as err :
+            done.set_exception(err)
+            written = None
+        #end try
+        if written != None :
+            contents = contents[written:]
+            if len(contents) == 0 :
+                done.set_result(None)
+            #end if
+        #end if
+        if done.done() :
+            loop.remove_writer(to_socket)
+        #end if
+    #end write_more
+
+#begin send_all
+    if len(contents) != 0 :
+        loop.add_writer(to_socket, write_more)
+    else :
+        done.set_result(None)
+    #end if
+    await done
+#end send_all
+
+async def receive_all(from_socket, n) :
+    "reads n bytes from from_socket, raising an exception if" \
+    " EOF reached."
+
+    done = loop.create_future()
+    w_loop = weak_ref(loop)
+    result = b""
+
+    def read_more() :
+        nonlocal n, result
+        loop = w_loop()
+        assert loop != None, "event loop has gone away"
+        try :
+            data = from_socket.recv(n)
+        except OSError as err :
+            done.set_exception(err)
+            data = None
+        #end try
+        if data != None :
+            if len(data) == 0 :
+                done.set_exception(IOError("EOF on socket"))
+            else :
+                result += data
+                n -= len(data)
+                if n == 0 :
+                    done.set_result(result)
+                #end if
+            #end if
+        #end if
+        if done.done() :
+            loop.remove_reader(from_socket)
+        #end if
+    #end read_more
+
+#begin receive_all
+    if n != 0 :
+        loop.add_reader(from_socket, read_more)
+    else :
+        done.set_result(b"")
+    #end if
+    return await done
+#end receive_all
+
+async def server_request(conn, id, contents, reply_id) :
+    await send_all(conn, chunk.make(id, contents))
+    header = await receive_all(conn, 8)
+    response = header + await receive_all \
+      (
+        conn,
+        chunk.extract_header(header)[1]
+      )
+    response = chunk.extract(response)[:2]
+    assert response[0] == reply_id
+    return response[1]
+#end server_request
+
+async def mainline() :
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.connect(common.socket_name)
+    await server_request(server, ID.request_set_description, {ID.name : b"example client"}, ID.reply_noop)
+    await server_request(server, ID.request_delay, {ID.interval : b"1.0"}, ID.reply_noop)
+    await server_request(server, ID.request_shutdown, {}, ID.reply_noop)
+    server.close()
+#end mainline
+
+loop.run_until_complete(mainline())
