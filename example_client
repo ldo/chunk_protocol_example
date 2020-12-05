@@ -8,12 +8,17 @@ from weakref import \
     ref as weak_ref
 import socket
 import asyncio
+import getopt
 import common
 from common import \
     chunk, \
     ID
 
 loop = asyncio.get_event_loop()
+
+#+
+# Useful stuff
+#-
 
 async def send_all(to_socket, contents) :
 
@@ -106,11 +111,80 @@ async def server_request(conn, id, contents, reply_id) :
     return response[1]
 #end server_request
 
+#+
+# Actions to perform
+#-
+
+available_actions = \
+    {
+        "delay" :
+            {
+                "code" : ID.request_delay,
+                "arg_id" : ID.interval,
+                "arg_type" : float,
+            },
+        "shutdown" :
+            {
+                "code" : ID.request_shutdown,
+            },
+    }
+
+#+
+# Mainline
+#-
+
+things_todo = []
+opts, args = getopt.getopt \
+  (
+    sys.argv[1:],
+    "",
+    []
+  )
+if len(args) == 0 :
+    raise getopt.GetoptError("nothing to do")
+#end if
+for item in args :
+    op = item.split(":", 1)
+    if len(op) == 1 :
+        op = op[0]
+        arg = ""
+    else :
+        op, arg = op
+    #end if
+    if op not in available_actions :
+        raise getopt.GetoptError("unrecognized action %s" % repr(op))
+    #end if
+    details = available_actions[op]
+    actionargs = {}
+    if "arg_id" in details :
+        if len(arg) == 0 :
+            raise getopt.GetoptError("%s op needs an arg" % op)
+        #end if
+        try :
+            details["arg_type"](arg)
+        except ValueError :
+            raise getopt.GetoptError \
+              (
+                "%s op arg %s is not valid for %s type" % (op, repr(arg), details["arg_type"].__name__)
+              )
+        #end try
+        actionargs[details["arg_id"]] = arg.encode()
+    else :
+        if len(arg) != 0 :
+            raise getopt.GetoptError("%s op does not expect an arg" % op)
+        #end if
+    #end if
+    things_todo.append({"name" : op, "id" : details["code"], "args" : actionargs})
+#end for
+
 async def mainline() :
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.connect(common.socket_name)
-    await server_request(server, ID.request_delay, {ID.interval : b"1.0"}, ID.reply_noop)
-    await server_request(server, ID.request_shutdown, {}, ID.reply_noop)
+    for action in things_todo :
+        sys.stdout.write("action: %s\n" % action["name"])
+        sys.stdout.flush()
+        await server_request(server, action["id"], action["args"], ID.reply_noop)
+    #end for
     server.close()
 #end mainline
 
