@@ -265,7 +265,7 @@ class ClientContext :
     #end write_more
 
     def process_request(self) :
-        self.clear_timeout()
+        self.clear_timeout() # no time limit on servicing request
         logfile.writeln("process request %s" % repr(self.chunk_id))
         func = server_functions.get(self.chunk_id)
         if func != None :
@@ -320,6 +320,7 @@ class ClientContext :
         assert self.to_write == None
         if id != None :
             self.to_write = chunk.make(id, contents)
+            self.reset_timeout()
             loop.add_writer(self, self.write_more)
         else :
             self.close("aborting request %s" % repr(self.chunk_id))
@@ -436,6 +437,7 @@ def start_server() :
 logfile.writeln("example server starting up")
 start_server()
 loop.run_forever()
+unlink_if(common.socket_name)
 loop = None # stop calling logfile.queue_flush()
 logfile.writeln("example server shutting down")
 logfile.flush()
