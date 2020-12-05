@@ -144,6 +144,10 @@ class ClientContext :
     def close(self, reason) :
         if self.conn != None :
             logfile.writeln("closing client %s -- %s." % (self.description, reason))
+            # need to ensure reader and writer listeners are removed before
+            # closing socket, to avoid intermittent event-loop deadlocks
+            loop.remove_reader(self)
+            loop.remove_writer(self)
             self.clear_timeout()
             self.conn.close()
             self.conn = None
