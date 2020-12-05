@@ -125,9 +125,8 @@ class ID:
     request_delay = b'DLAY'
       # request to delay for a specified time. Contents:
       #     interval -- interval in seconds.
-      # Response (after specified delay) is reply_noop;
+      # Response (after specified delay) is reply_noop.
 
-    name = b'NAME'
     interval = b'NTVL'
       # decimal number string (fractional part allowed)
 

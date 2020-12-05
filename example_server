@@ -248,7 +248,6 @@ class ClientContext :
               )
             written = None
         #end try
-        logfile.writeln("writing %s => %s" % (repr(self.to_write), repr(written))) # debug
         if written != None :
             self.reset_timeout()
             self.to_write = self.to_write[written:]
@@ -370,7 +369,7 @@ def handle_shutdown_request(client, contents) :
 async def handle_delay_request(client, contents) :
     require_all([ID.interval], contents)
     try :
-        interval = float(contents[ID.interval])
+        interval = float(contents[ID.interval].decode())
     except ValueError :
         raise RequestFailure("invalid delay interval")
     #end try
@@ -421,14 +420,18 @@ def accept_connection(server_listen) :
         peercred = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize(u_cred))
         pid, uid, gid = struct.unpack(u_cred, peercred)
         description = "pid %d, uid %d, gid %d" % (pid, uid, gid)
-        logfile.writeln \
-          (
-            "connection from %s" % description
-          )
         if not ClientContext.shutting_down :
+            logfile.writeln \
+              (
+                "connection from %s" % description
+              )
             client = ClientContext(conn, description)
             loop.add_reader(client, client.read_more)
         else :
+            logfile.writeln \
+              (
+                "reject connection from %s" % description
+              )
             conn.close()
         #end if
     #end if
