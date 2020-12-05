@@ -119,11 +119,6 @@ class ID:
     reply_noop = b'NOOP'
       # reply returned when there is nothing to return. No data.
 
-    request_set_description = b'DSC='
-      # request to set the client description field. Contents:
-      #    name -- the value to put in the description field.
-      # Reponse is reply_noop.
-
     request_shutdown = b'SHUT'
       # request to shut down the server. Response is reply_noop.
 

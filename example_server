@@ -5,6 +5,7 @@
 
 import sys
 import os
+import struct
 import errno
 from weakref import \
     ref as weak_ref
@@ -124,11 +125,11 @@ class ClientContext :
     live_clients = set()
     shutting_down = False
 
-    def __init__(self, conn) :
+    def __init__(self, conn, description) :
         celf = type(self)
         self.conn = conn
         celf.client_count += 1
-        self.description = "<client %d>" % self.client_count
+        self.description = description
         self.reading_header = True
         self.chunk_id = None
         self.to_read = None
@@ -362,13 +363,6 @@ def handle_shutdown_request(client, contents) :
     client.return_response(ID.reply_noop, b"")
 #end handle_shutdown_request
 
-def handle_set_description_request(client, contents) :
-    require_all([ID.name], contents)
-    logfile.writeln("set client description to %s" % repr(contents[ID.name]))
-    client.description = contents[ID.name] # TBD sanitize
-    client.return_response(ID.reply_noop, b"")
-#end handle_set_description_request
-
 async def handle_delay_request(client, contents) :
     require_all([ID.interval], contents)
     try :
@@ -393,11 +387,6 @@ server_functions = \
                 "action" : handle_shutdown_request,
                 "parse" : True,
             },
-        ID.request_set_description :
-            {
-                "action" : handle_set_description_request,
-                "parse" : True,
-            },
         ID.request_delay :
             {
                 "action" : handle_delay_request,
@@ -420,8 +409,24 @@ def accept_connection(server_listen) :
         conn = None
     #end try
     if conn != None :
-        client = ClientContext(conn)
-        loop.add_reader(client, client.read_more)
+        # peername always empty for unix-family socket connection.
+        # even conn.getpeername() returns empty string.
+        u_cred = "=iII"
+          # as per sys/socket.h: struct { pid_t pid; uid_t uid; gid_t gid; }
+          # -- all 32 bits on Linux AMD64
+        peercred = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize(u_cred))
+        pid, uid, gid = struct.unpack(u_cred, peercred)
+        description = "pid %d, uid %d, gid %d" % (pid, uid, gid)
+        logfile.writeln \
+          (
+            "connection from %s" % description
+          )
+        if not ClientContext.shutting_down :
+            client = ClientContext(conn, description)
+            loop.add_reader(client, client.read_more)
+        else :
+            conn.close()
+        #end if
     #end if
 #end accept_connection
 

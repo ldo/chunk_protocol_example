@@ -109,7 +109,6 @@ async def server_request(conn, id, contents, reply_id) :
 async def mainline() :
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.connect(common.socket_name)
-    await server_request(server, ID.request_set_description, {ID.name : b"example client"}, ID.reply_noop)
     await server_request(server, ID.request_delay, {ID.interval : b"1.0"}, ID.reply_noop)
     await server_request(server, ID.request_shutdown, {}, ID.reply_noop)
     server.close()
