@@ -1,6 +1,56 @@
 #!/usr/bin/python3
 #+
-# Example client for chunk protocol, using asyncio.
+# Example client for chunk protocol, using asyncio. Invoke this script
+# as follows:
+#
+#     example_client «action» [«action» ...]
+#
+# where each «action» describes an action to perform. Currently-
+# recognized actions are:
+#
+#     delay:«seconds»
+#         wait the specified number of «seconds» before continuing. If
+#         you wait longer than the server timeout, it will disconnect
+#         you.
+#
+#     request:«request-id»:«contents»
+#         send a request to the server and display any returned
+#         response. «request-id» is the 4-byte request ID, and
+#         contents is either the literal request chunk contents, or
+#         can take the form
+#
+#             «id»=«subchunk»[:«id»=«subchunk»]
+#
+#         where each «id» is a 4-byte subchunk ID and «subchunk» is
+#         the corresponding literal subchunk contents. Note that request
+#         and chunk IDs are case-sensitive.
+#            Each of the IDs and chunk/subchunk contents can contain
+#         sequences of the form %«nn» where «nn» is 2 hexadecimal
+#         digits, useful for encoding non-ASCII characters or
+#         characters with special interpretations in the
+#         chunk-specification syntax when they occur literally. For
+#         example, a “%” character can be represented as “%25”, while
+#         “:” is “%3A” or “%3a”, and “=” is “%3d” or “%3D”.
+#            For example (as per the sample protocol defined in
+#         common.py),
+#
+#             request:ECHO:'hi there!'
+#
+#         sends a request to the server to echo the specified text
+#         back to the client, while
+#
+#             request:DLAY:NTVL=3.5
+#
+#         tells the server to delay 3.5 seconds before responding,
+#         and
+#
+#             request:SHUT
+#
+#         tells the server to shut down.
+#            Note that no validation of the request is done on the
+#         client side, other than conformance to basic chunk syntax.
+#         If a bad request is sent, the server will log an error
+#         message and disconnect you.
 #-
 
 import sys
