@@ -98,7 +98,7 @@ async def receive_all(from_socket, n) :
     return await done
 #end receive_all
 
-async def server_request(conn, id, contents, reply_id) :
+async def server_request(conn, id, contents) :
     await send_all(conn, chunk.make(id, contents))
     header = await receive_all(conn, 8)
     response = header + await receive_all \
@@ -107,25 +107,97 @@ async def server_request(conn, id, contents, reply_id) :
         chunk.extract_header(header)[1]
       )
     response = chunk.extract(response)[:2]
-    assert response[0] == reply_id
-    return response[1]
+    return response
 #end server_request
 
 #+
 # Actions to perform
 #-
 
+def action_delay(interval) :
+
+    def doit(server) :
+        return asyncio.sleep(interval)
+    #end doit
+
+#begin action_delay
+    return doit
+#end action_delay
+
+def action_request(arg) :
+
+    def unescape(s) :
+        rest = s
+        t = b""
+        while True :
+            pos = rest.find("%")
+            if pos < 0 :
+                t += rest.encode("ascii")
+                break
+            #end if
+            if pos + 3 > len(rest) :
+                raise SyntaxError("truncated %%-sequence in %s" % repr(arg))
+            #end if
+            t += rest[:pos].encode("ascii")
+            n = 0
+            for d in rest[pos + 1:pos + 3] :
+                if '0' <= d <= '9' :
+                    d = ord(d) - ord('0')
+                elif 'a' <= d <= 'f' :
+                    d = ord(d) - ord('a') + 10
+                elif 'A' <= d <= 'F' :
+                    d = ord(d) - ord('A') + 10
+                else :
+                    raise SyntaxError("bad %%-sequence in %s" % repr(arg))
+                #end if
+                n = n * 16 + d
+            #end for
+            t += bytes((n,))
+            rest = rest[pos + 3:]
+        #end while
+        return t
+    #end unescape
+
+    op_id = None
+    op_args = []
+
+    def doit(server) :
+        return server_request(server, op_id, op_args)
+    #end doit
+
+#begin action_request
+    items = arg.split(":")
+    op_id = unescape(items[0])
+    if len(op_id) != 4 :
+        raise SyntaxError("opcode not 4 bytes: %s" % repr(op_id))
+    #end if
+    items = items[1:]
+    if len(items) == 1 and "=" not in items[0] :
+        op_args = unescape(items[0])
+    else :
+        for item in items :
+            item_id, item_contents = item.split("=")
+            item_id = unescape(item_id)
+            if len(item_id) != 4 :
+                raise SyntaxError("content subchunk id not 4 bytes: %s" % repr(item_id))
+            #end if
+            op_args.append((item_id, unescape(item_contents)))
+        #end for
+    #end if
+    return doit
+#end action_request
+
 available_actions = \
     {
         "delay" :
             {
-                "code" : ID.request_delay,
-                "arg_id" : ID.interval,
-                "arg_type" : float,
+                "action" : action_delay,
+                "arg_conv" : float,
             },
-        "shutdown" :
+        "request" :
             {
-                "code" : ID.request_shutdown,
+                "action" : action_request,
+                "arg_conv" : lambda s : s,
             },
     }
 
@@ -133,7 +205,6 @@ available_actions = \
 # Mainline
 #-
 
-things_todo = []
 opts, args = getopt.getopt \
   (
     sys.argv[1:],
@@ -143,47 +214,34 @@ opts, args = getopt.getopt \
 if len(args) == 0 :
     raise getopt.GetoptError("nothing to do")
 #end if
+actions = []
 for item in args :
-    op = item.split(":", 1)
-    if len(op) == 1 :
-        op = op[0]
-        arg = ""
-    else :
-        op, arg = op
-    #end if
+    op, arg = item.split(":", 1)
     if op not in available_actions :
         raise getopt.GetoptError("unrecognized action %s" % repr(op))
     #end if
-    details = available_actions[op]
-    actionargs = {}
-    if "arg_id" in details :
-        if len(arg) == 0 :
-            raise getopt.GetoptError("%s op needs an arg" % op)
-        #end if
-        try :
-            details["arg_type"](arg)
-        except ValueError :
-            raise getopt.GetoptError \
-              (
-                "%s op arg %s is not valid for %s type" % (op, repr(arg), details["arg_type"].__name__)
-              )
-        #end try
-        actionargs[details["arg_id"]] = arg.encode()
-    else :
-        if len(arg) != 0 :
-            raise getopt.GetoptError("%s op does not expect an arg" % op)
-        #end if
-    #end if
-    things_todo.append({"name" : op, "id" : details["code"], "args" : actionargs})
+    action = available_actions[op]
+    try :
+        argval = action["arg_conv"](arg)
+    except ValueError :
+        raise getopt.GetoptError \
+          (
+            "arg %s is not valid for op %s" % (repr(arg), op)
+          )
+    #end try
+    actions.append({"name" : item, "action" : action["action"](argval)})
 #end for
 
 async def mainline() :
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.connect(common.socket_name)
-    for action in things_todo :
+    for action in actions :
         sys.stdout.write("action: %s\n" % action["name"])
         sys.stdout.flush()
-        await server_request(server, action["id"], action["args"], ID.reply_noop)
+        result = await action["action"](server)
+        if result != None :
+            sys.stdout.write(" result: %s\n" % repr(result))
+        #end if
     #end for
     server.close()
 #end mainline
