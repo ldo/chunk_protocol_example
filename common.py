@@ -122,6 +122,14 @@ class ID:
     request_shutdown = b'SHUT'
       # request to shut down the server. Response is reply_noop.
 
+    request_echo = b'ECHO'
+      # request to echo request contents back to client.
+      # Response is reply_echo.
+
+    reply_echo = b'ECHO'
+      # response to request_echo. Contents equal those
+      # of request.
+
     request_delay = b'DLAY'
       # request to delay for a specified time. Contents:
       #     interval -- interval in seconds.

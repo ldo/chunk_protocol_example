@@ -360,6 +360,10 @@ def handle_noop_request(client, contents) :
     client.return_response(ID.reply_noop, b"")
 #end handle_noop_request
 
+def handle_echo_request(client, contents) :
+    client.return_response(ID.reply_echo, contents)
+#end handle_echo_request
+
 def handle_shutdown_request(client, contents) :
     logfile.writeln("shutdown request received from client %s." % client.description)
     ClientContext.shutting_down = True
@@ -383,6 +387,11 @@ server_functions = \
         ID.request_noop :
             {
                 "action" : handle_noop_request,
+                "parse" : False,
+            },
+        ID.request_echo :
+            {
+                "action" : handle_echo_request,
                 "parse" : False,
             },
         ID.request_shutdown :
