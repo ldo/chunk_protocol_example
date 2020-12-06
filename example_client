@@ -51,6 +51,14 @@
 #         client side, other than conformance to basic chunk syntax.
 #         If a bad request is sent, the server will log an error
 #         message and disconnect you.
+#
+#     raw-send:«contents»
+#         send raw data to the server, without regard to correct
+#         chunk syntax.
+#
+#     raw-receive:«nr-bytes»
+#         receive the specified number of bytes or raw data from
+#         the server.
 #-
 
 import sys
@@ -69,6 +77,39 @@ loop = asyncio.get_event_loop()
 #+
 # Useful stuff
 #-
+
+def unescape(s, arg) :
+    "encodes string s as bytes, expanding any %-escapes found."
+    rest = s
+    t = b""
+    while True :
+        pos = rest.find("%")
+        if pos < 0 :
+            t += rest.encode("ascii")
+            break
+        #end if
+        if pos + 3 > len(rest) :
+            raise SyntaxError("truncated %%-sequence in %s" % repr(arg))
+        #end if
+        t += rest[:pos].encode("ascii")
+        n = 0
+        for d in rest[pos + 1:pos + 3] :
+            if '0' <= d <= '9' :
+                d = ord(d) - ord('0')
+            elif 'a' <= d <= 'f' :
+                d = ord(d) - ord('a') + 10
+            elif 'A' <= d <= 'F' :
+                d = ord(d) - ord('A') + 10
+            else :
+                raise SyntaxError("bad %%-sequence in %s" % repr(arg))
+            #end if
+            n = n * 16 + d
+        #end for
+        t += bytes((n,))
+        rest = rest[pos + 3:]
+    #end while
+    return t
+#end unescape
 
 async def send_all(to_socket, contents) :
 
@@ -176,38 +217,6 @@ def action_delay(interval) :
 
 def action_request(arg) :
 
-    def unescape(s) :
-        rest = s
-        t = b""
-        while True :
-            pos = rest.find("%")
-            if pos < 0 :
-                t += rest.encode("ascii")
-                break
-            #end if
-            if pos + 3 > len(rest) :
-                raise SyntaxError("truncated %%-sequence in %s" % repr(arg))
-            #end if
-            t += rest[:pos].encode("ascii")
-            n = 0
-            for d in rest[pos + 1:pos + 3] :
-                if '0' <= d <= '9' :
-                    d = ord(d) - ord('0')
-                elif 'a' <= d <= 'f' :
-                    d = ord(d) - ord('a') + 10
-                elif 'A' <= d <= 'F' :
-                    d = ord(d) - ord('A') + 10
-                else :
-                    raise SyntaxError("bad %%-sequence in %s" % repr(arg))
-                #end if
-                n = n * 16 + d
-            #end for
-            t += bytes((n,))
-            rest = rest[pos + 3:]
-        #end while
-        return t
-    #end unescape
-
     op_id = None
     op_args = []
 
@@ -217,25 +226,50 @@ def action_request(arg) :
 
 #begin action_request
     items = arg.split(":")
-    op_id = unescape(items[0])
+    op_id = unescape(items[0], arg)
     if len(op_id) != 4 :
         raise SyntaxError("opcode not 4 bytes: %s" % repr(op_id))
     #end if
     items = items[1:]
     if len(items) == 1 and "=" not in items[0] :
-        op_args = unescape(items[0])
+        op_args = unescape(items[0], arg)
     else :
         for item in items :
             item_id, item_contents = item.split("=")
-            item_id = unescape(item_id)
+            item_id = unescape(item_id, arg)
             if len(item_id) != 4 :
                 raise SyntaxError("content subchunk id not 4 bytes: %s" % repr(item_id))
             #end if
-            op_args.append((item_id, unescape(item_contents)))
+            op_args.append((item_id, unescape(item_contents, arg)))
         #end for
     #end if
     return doit
 #end action_request
+
+def action_raw_send(arg) :
+
+    to_send = unescape(arg, arg)
+
+    def doit(server) :
+        return send_all(server, to_send)
+    #end doit
+
+#begin action_raw_send
+    return doit
+#end action_raw_send
+
+def action_raw_receive(to_receive) :
+
+    def doit(server) :
+        return receive_all(server, to_receive)
+    #end doit
+
+#begin action_raw_receive
+    if to_receive < 0 :
+        raise ValueError("cannot receive negative nr bytes")
+    #end if
+    return doit
+#end action_raw_receive
 
 available_actions = \
     {
@@ -247,7 +281,15 @@ available_actions = \
         "request" :
             {
                 "action" : action_request,
-                "arg_conv" : lambda s : s,
+            },
+        "raw-send" :
+            {
+                "action" : action_raw_send,
+            },
+        "raw-receive" :
+            {
+                "action" : action_raw_receive,
+                "arg_conv" : int,
             },
     }
 
@@ -272,7 +314,7 @@ for item in args :
     #end if
     action = available_actions[op]
     try :
-        argval = action["arg_conv"](arg)
+        argval = action.get("arg_conv", lambda s : s)(arg)
     except ValueError :
         raise getopt.GetoptError \
           (
