@@ -375,7 +375,7 @@ async def handle_delay_request(client, contents) :
     require_all([ID.interval], contents)
     try :
         interval = float(contents[ID.interval].decode())
-    except ValueError :
+    except (ValueError, UnicodeDecodeError) :
         raise RequestFailure("invalid delay interval")
     #end try
     logfile.writeln("delay for %.3f seconds" % interval)
