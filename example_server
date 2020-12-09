@@ -274,7 +274,7 @@ class ClientContext :
         func = server_functions.get(self.chunk_id)
         if func != None :
             if func["parse"] :
-                args = dict(chunk.extract_sequence(self.data_read))
+                args = dict(chunk.extract_iter(self.data_read))
             else :
                 args = self.data_read
             #end if

@@ -92,19 +92,16 @@ class chunk :
     #end extract
 
     @classmethod
-    def extract_sequence(chunk, data) :
-        "parses data into a sequence of pairs of chunk IDs and contents."
-        result = []
+    def extract_iter(chunk, data) :
+        "parses data, yielding successive pairs of chunk IDs and corresponding contents."
         while True :
             items = chunk.extract(data)
             if items == None :
                 break
-            result.append((items[0], items[1]))
+            yield items[0], items[1]
             data = items[2]
         #end while
-        return \
-            result
-    #end extract_sequence
+    #end extract_iter
 
 #end chunk
 
