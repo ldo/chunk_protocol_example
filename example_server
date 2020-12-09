@@ -9,6 +9,7 @@ import struct
 import errno
 from weakref import \
     ref as weak_ref
+import operator
 import time
 import socket
 import asyncio
@@ -383,6 +384,82 @@ async def handle_delay_request(client, contents) :
     client.return_response(ID.reply_noop, b"")
 #end def handle_delay_request
 
+def handle_compute_request(client, contents) :
+
+    valid_operators = \
+        {
+            "+" : {"op" : operator.add, "vari" : True, "ident" : 0},
+            "-" : {"op" : operator.sub, "vari" : False},
+            "*" : {"op" : operator.mul, "vari" : True, "ident" : 1},
+            "/" : {"op" : operator.truediv, "vari" : False},
+            "%" : {"op" : operator.mod, "vari" : False},
+            "**" : {"op" : operator.pow, "vari" : False},
+        }
+
+#begin handle_compute_request
+    oper = None
+    operands = []
+    result = {}
+    for chunkid, subchunk in chunk.extract_iter(contents) :
+        if chunkid == ID.operator :
+            if oper != None :
+                raise RequestFailure("more than one operator specified in compute request")
+            #end if
+            try :
+                oper = subchunk.decode()
+            except UnicodeDecodeError :
+                raise RequestFailure("invalid operator %s in compute request" % repr(subchunk))
+            #end if
+        elif chunkid == ID.operand :
+            try :
+                operand = complex(subchunk.decode())
+            except (ValueError, UnicodeDecodeError) :
+                raise RequestFailure("invalid operand %s in compute request" % repr(subchunk))
+            else :
+                if operand.imag == 0 :
+                    operand = operand.real
+                #end if
+            #end if
+            operands.append(operand)
+        else :
+            raise RequestFailure("invalid subchunk ID %s in compute request" % repr(chunkid))
+        #end if
+    #end for
+    if oper == None :
+        raise RequestFailure("missing operator in compute request")
+    #end if
+    if oper not in valid_operators :
+        raise RequestFailure("unrecognized operator %s in compute request" % repr(subchunk))
+    #end if
+    op = valid_operators[oper]
+    if not op["vari"] and len(operands) != 2 :
+        raise RequestFailure("invalid number of operands in compute request")
+    #end if
+    if op["vari"] :
+        value = op["ident"]
+        for opnd in operands :
+            value = op["op"](value, opnd)
+        #end for
+        success = True
+    else :
+        try :
+            value = op["op"](*operands)
+        except (ZeroDivisionError, TypeError) :
+            success = False
+        else :
+            success = True
+        #end try
+    #end if
+    if success :
+        if value.imag == 0 :
+            value = value.real
+        #end if
+        result[ID.value] = str(value).encode()
+    #end if
+    result[ID.status] = ("0", "1")[success]
+    client.return_response(ID.reply_answer, result)
+#end handle_compute_request
+
 server_functions = \
     {
         ID.request_noop :
@@ -404,6 +481,11 @@ server_functions = \
             {
                 "action" : handle_delay_request,
                 "parse" : True,
+            },
+        ID.request_compute :
+            {
+                "action" : handle_compute_request,
+                "parse" : False,
             },
     }
 

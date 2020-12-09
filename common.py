@@ -132,11 +132,31 @@ class ID:
       #     interval -- interval in seconds.
       # Response (after specified delay) is reply_noop.
 
+    request_compute = b'CMPU'
+      # request to perform a computation. Contents:
+      #     operator -- contains the name of the operation to perform,
+      #         one of “+”, “-”, “*”, “/”, “%” or “**”.
+      #     operand -- need to have two of these for “-”, “/”, “%” or “**”,
+      #         while “+” and “*” can have any number of operands.
+      # Response is reply_answer.
+
+    reply_answer = b'ANSR'
+      # Response to request_compute. Contents:
+      #     status -- whether computation was successful or not (i.e. undefined result)
+      #     value  -- the computation result, if successful.
+
     interval = b'NTVL'
       # decimal number string (fractional part allowed)
+
+    operator = b'OPER'
+
+    operand = b'OPND'
+      # integer, float or complex number string
+
+    value = b'VALU'
+      # integer, float or complex number string
 
     status = b'STS '
       # status code, decimal integer string, value of 1 for success, 0 for failure.
 
 #end ID
-
