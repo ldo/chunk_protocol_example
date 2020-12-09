@@ -287,6 +287,7 @@ class ClientContext :
                     %
                         (repr(self.chunk_id), bad.msg)
                   )
+                result = None
             #end try
             if asyncio.iscoroutine(result) :
                 assert self.current_request == None
