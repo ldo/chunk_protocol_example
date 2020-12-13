@@ -1,0 +1,53 @@
+This project contains example Python code to implement a very basic
+bytestream protocol (or actually, protocol family) I call the “chunk”
+protocol. There are probably more sophisticated ways of doing this
+sort of thing nowadays, but I put together the basic idea of this
+close to two decades ago, when I was first building client-server
+communication systems between processes running on the same machine,
+and I thought there are probably still simple, not to say toy,
+scenarios where this code might be useful.
+
+The idea comes from “Interchange File Format” (“IFF”)
+<https://en.wikipedia.org/wiki/Interchange_File_Format>, a family of
+file formats that originated on the Commodore-Amiga back in the 1980s.
+The communication stream is divided up into a sequence of “chunks”,
+each of which starts with a 4-byte ID code followed by a 4-byte
+unsigned integer length n, after which come n bytes of arbitrary data.
+
+I dispensed with all the IFF elaborations like “FORM”/“LIST”/“PROP”
+chunks, and also got rid of the 2-byte alignment requirement that only
+made sense on CPU bus architectures of the time. And the length field
+is explicitly little-endian. Having used both big-endian and
+little-endian architectures over the years, I have come to the
+conclusion that only little-endian architectures can be completely
+consistent in terms of bit and byte numbering versus integer digit
+place values.
+
+Other, more advanced protocols may include provisions for some degree
+of type introspection; I never got as far as needing this in any of my
+applications. A chunk may contain other (sub)chunks, down to 1 level
+deep at most; this has to be determined from the containing chunk ID,
+which is protocol-specific.
+
+Also, this example code includes no provision for authentication or
+encryption over an insecure link, such as between different machines.
+I did implement such things myself in the early days, but nowadays it
+is highly recommended to use something like an existing SSL/TLS
+library, and avoid rolling your own.
+
+The example code includes both generic parts and parts that implement
+a specific client-server protocol for illustration purposes. There are
+ID codes specific to this protocol in the “common” module and
+corresponding implementation handlers in “example_server”. The
+“example_client” doesn’t actually implement any knowledge of this
+particular example protocol (notwithstanding the examples in the
+comments that refer to it): it can be used to send arbitrary requests
+to the server, including malformed ones, just to demonstrate how the
+server deals with protocol violations.
+
+This code is obviously a bit more up-to-date than my early code; it
+has been reworked to use the asyncio event loop architecture available
+in Python 3.5 and later.
+
+Lawrence D'Oliveiro <ldo@geek-central.gen.nz>
+2020 December 13
