@@ -45,7 +45,11 @@
 #             request:DLAY:NTVL=3.5
 #
 #         tells the server to delay 3.5 seconds before responding,
-#         and
+#
+#             requestd:CMPU:OPER=+:OPND=3:OPND=4
+#
+#         asks the server to return the (decoded) result of adding 3
+#         to 4, and
 #
 #             request:SHUT
 #
