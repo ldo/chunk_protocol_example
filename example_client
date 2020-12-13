@@ -14,8 +14,11 @@
 #         you.
 #
 #     request:«request-id»:«contents»
+#     requestd:«request-id»:«contents»
 #         send a request to the server and display any returned
-#         response. «request-id» is the 4-byte request ID, and
+#         response. For “request”, the response is displayed in raw
+#         form, whereas “requestd” will try to decode it as a sequence
+#         of sub-chunks. «request-id» is the 4-byte request ID, and
 #         contents is either the literal request chunk contents, or
 #         can take the form
 #
@@ -215,16 +218,21 @@ def action_delay(interval) :
     return doit
 #end action_delay
 
-def action_request(arg) :
+def action_request_common(arg, decode_response) :
 
     op_id = None
     op_args = []
 
-    def doit(server) :
+    def doit_raw(server) :
         return server_request(server, op_id, op_args)
-    #end doit
+    #end doit_raw
 
-#begin action_request
+    async def doit_decoded(server) :
+        result = await server_request(server, op_id, op_args)
+        return (result[0], list(chunk.extract_iter(result[1])))
+    #end doit_decoded
+
+#begin action_request_common
     items = arg.split(":")
     op_id = unescape(items[0], arg)
     if len(op_id) != 4 :
@@ -243,8 +251,16 @@ def action_request(arg) :
             op_args.append((item_id, unescape(item_contents, arg)))
         #end for
     #end if
-    return doit
-#end action_request
+    return (doit_raw, doit_decoded)[decode_response]
+#end action_request_common
+
+def action_request_with_raw_response(arg) :
+    return action_request_common(arg, False)
+#end action_request_with_raw_response
+
+def action_request_with_decoded_response(arg) :
+    return action_request_common(arg, True)
+#end action_request_with_decoded_response
 
 def action_raw_send(arg) :
 
@@ -280,7 +296,11 @@ available_actions = \
             },
         "request" :
             {
-                "action" : action_request,
+                "action" : action_request_with_raw_response,
+            },
+        "requestd" :
+            {
+                "action" : action_request_with_decoded_response,
             },
         "raw-send" :
             {
