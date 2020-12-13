@@ -125,7 +125,19 @@ class logfile :
 io_timeout = 1 * TIME_UNIT.MINUTE
   # short value for testing
 
+class RequestFailure(Exception) :
+    "can be raised by request handlers to abort the current request" \
+    " and abandon the client connection with a suitable message."
+
+    def __init__(self, msg) :
+        self.msg = msg
+    #end __init__
+
+#end RequestFailure
+
 class ClientContext :
+    "manages a currently-open client connection. This object is also" \
+    " passed to request handlers, for use for returning responses."
 
     client_count = 0
     live_clients = set()
@@ -148,6 +160,7 @@ class ClientContext :
     #end __init__
 
     def close(self, reason) :
+        "closes the connection, logging the specified reason message."
         if self.conn != None :
             logfile.writeln("closing client %s -- %s." % (self.description, reason))
             # need to ensure reader and writer listeners are removed before
@@ -166,6 +179,7 @@ class ClientContext :
     #end close
 
     def clear_timeout(self) :
+        "clears the pending idle timeout."
         if self.timeout_pending != None :
             self.timeout_pending.cancel()
             self.timeout_pending = None
@@ -173,6 +187,7 @@ class ClientContext :
     #end clear_timeout
 
     def reset_timeout(self) :
+        "restarts the pending idle timeout."
 
         w_self = weak_ref(self)
 
@@ -190,10 +205,13 @@ class ClientContext :
     #end reset_timeout
 
     def fileno(self) :
+        "lets this ClientContext object act as a read/write listener for" \
+        " its client socket connection."
         return self.conn.fileno()
     #end fileno
 
     def read_more(self) :
+        "read listener callback that fetches some more data from the client socket."
         if not self.shutting_down :
             if self.reading_header :
                 if self.data_read == None :
@@ -243,6 +261,7 @@ class ClientContext :
     #end read_more
 
     def write_more(self) :
+        "write listener callback that sends some more data to the client socket."
         try :
             written = self.conn.send(self.to_write)
         except OSError as err :
@@ -275,6 +294,7 @@ class ClientContext :
     #end write_more
 
     def process_request(self) :
+        "processes a complete received request chunk."
         self.clear_timeout() # no time limit on servicing request
         logfile.writeln("process request %s" % repr(self.chunk_id))
         func = server_functions.get(self.chunk_id)
@@ -327,6 +347,8 @@ class ClientContext :
     #end process_request
 
     def return_response(self, id, contents) :
+        "queues the response chunk for sending back to the client. Or id can be" \
+        " None to indicate that the connection should be abandoned."
         logfile.writeln("return response (%s, %s)" % (repr(id), repr(contents)))
         assert self.to_write == None
         if id != None :
@@ -343,14 +365,6 @@ class ClientContext :
 #+
 # Request handling
 #-
-
-class RequestFailure(Exception) :
-
-    def __init__(self, msg) :
-        self.msg = msg
-    #end __init__
-
-#end RequestFailure
 
 def require_all(keys, args) :
     "raises a RequestFailure if not all the specified keys are in args."
@@ -466,7 +480,11 @@ def handle_compute_request(client, contents) :
 #end handle_compute_request
 
 server_functions = \
-    {
+    { # Table of recognized request codes and corresponding handlers.
+      # Key is request code, value is dict with entries:
+      #     "action" : request handler
+      #     "parse" : whether to automatically parse the top-level
+      #         request chunk into a dictionary of subchunks.
         ID.request_noop :
             {
                 "action" : handle_noop_request,
@@ -499,6 +517,7 @@ server_functions = \
 #-
 
 def accept_connection(server_listen) :
+    "read listener on the socket for accepting client connections."
     try :
         conn, peername = server_listen.accept()
     except OSError as err :
