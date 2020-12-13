@@ -66,6 +66,11 @@
 #     raw-receive:«nr-bytes»
 #         receive the specified number of bytes or raw data from
 #         the server.
+#
+# Copyright 2020 by Lawrence D'Oliveiro <ldo@geek-central.gen.nz>. This
+# script is licensed CC0
+# <https://creativecommons.org/publicdomain/zero/1.0/>; do with it
+# what you will.
 #-
 
 import sys
