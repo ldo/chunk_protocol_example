@@ -54,14 +54,14 @@ class logfile :
 
     @staticmethod
     def timestamp(when = None) :
-        "returns a UTC timestamp in the form yyyymmdddhhmmss for" \
+        "returns a UTC timestamp in the form yyyymmdddhhmmssZ for" \
         " the specified time, or the current time if not specified."
         if when == None :
             when = time.time()
         #end if
         items = time.gmtime(when)
         return \
-                "%04d%02d%02d%02d%02d%02d" \
+                "%04d%02d%02d%02d%02d%02dZ" \
             % \
                 (
                     items.tm_year,
