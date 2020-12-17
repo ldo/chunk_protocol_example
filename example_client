@@ -354,8 +354,8 @@ for item in args :
 #end for
 
 async def mainline() :
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.connect(common.socket_name)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_NONBLOCK)
+    await loop.sock_connect(server, common.socket_name)
     for action in actions :
         sys.stdout.write("action: %s\n" % action["name"])
         sys.stdout.flush()
