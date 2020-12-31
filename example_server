@@ -142,6 +142,7 @@ class ClientContext :
     client_count = 0
     live_clients = set()
     shutting_down = False
+    reasonable_request_size = 65535
 
     def __init__(self, conn, description) :
         celf = type(self)
@@ -238,11 +239,15 @@ class ClientContext :
                     if self.to_read == 0 :
                         if self.reading_header :
                             self.chunk_id, self.to_read = chunk.extract_header(self.data_read)
-                            self.data_read = b""
-                            self.reading_header = False
-                            if self.to_read == 0 :
-                                loop.remove_reader(self)
-                                self.process_request()
+                            if self.to_read > self.reasonable_request_size :
+                                self.close("request of %d bytes is too large" % self.to_read)
+                            else :
+                                self.data_read = b""
+                                self.reading_header = False
+                                if self.to_read == 0 :
+                                    loop.remove_reader(self)
+                                    self.process_request()
+                                #end if
                             #end if
                         else :
                             loop.remove_reader(self)
