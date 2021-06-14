@@ -37,8 +37,8 @@ class chunk :
     "More complex messages may use chunks within chunks."
 
     @classmethod
-    def make(chunk, id, contents) :
-        "creates a new chunk with the specified id and contents."
+    def encode(chunk, contents) :
+        "converts contents to a bytes object in some suitable representation."
         if isinstance(contents, str) :
             contents = contents.encode()
         elif isinstance(contents, bytes) :
@@ -62,6 +62,14 @@ class chunk :
                 "contents must be str, bytes, dict, sequence or int, not %s" % type(contents)
               )
         #end if
+        return \
+            contents
+    #end encode
+
+    @classmethod
+    def make(chunk, id, contents) :
+        "creates a new chunk with the specified id and contents."
+        contents = chunk.encode(contents)
         return \
             (
                 struct.pack("<4sI", id, len(contents))
