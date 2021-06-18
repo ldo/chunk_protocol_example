@@ -337,6 +337,10 @@ class ClientContext :
                                     (repr(self.chunk_id), bad.msg)
                               )
                         #end if
+                    except Exception as fail :
+                        # good to try to report failures due to bugs, otherwise
+                        # it seems I don’t see them
+                        logfile.writeln("request handler error: %s" % repr(fail))
                     #end try
                     self = w_self()
                     if self != None :
